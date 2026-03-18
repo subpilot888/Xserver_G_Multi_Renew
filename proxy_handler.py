@@ -27,7 +27,7 @@ def parse_http(parsed):
     return outbound
 
 def parse_vless(parsed, params):
-    outbound = {"type": "vless", "tag": "proxy", "server": parsed.hostname, "server_port": parsed.port or 443, "uuid": parsed.username}
+    outbound = {"type": "vless", "tag": "proxy", "server": parsed.hostname, "server_port": parsed.port or 443, "uuid": unquote(parsed.username or "")}
     flow = params.get("flow", [""])[0]
     if flow: outbound["flow"] = flow
     security = params.get("security", [""])[0]
@@ -35,6 +35,8 @@ def parse_vless(parsed, params):
         tls = {"enabled": True}
         sni = params.get("sni", [""])[0]
         if sni: tls["server_name"] = sni
+        alpn = params.get("alpn", [""])[0]
+        if alpn: tls["alpn"] = alpn.split(",")
         fp = params.get("fp", [""])[0]
         if fp: tls["utls"] = {"enabled": True, "fingerprint": fp}
         insecure = params.get("insecure", params.get("allowInsecure", ["0"]))[0]
@@ -64,14 +66,17 @@ def parse_vmess(url_str):
     decoded = base64.b64decode(encoded).decode("utf-8")
     cfg = json.loads(decoded)
     outbound = {"type": "vmess", "tag": "proxy", "server": cfg.get("add", ""), "server_port": int(cfg.get("port", 443)), "uuid": cfg.get("id", ""), "security": cfg.get("scy", "auto")}
-    if cfg.get("tls") == "tls":
+    if cfg.get("tls") == "tls" or cfg.get("sni"):
         tls = {"enabled": True}
-        sni = cfg.get("sni", "")
-        if sni: tls["server_name"] = sni
+        if cfg.get("sni"): tls["server_name"] = cfg["sni"]
+        elif cfg.get("host"): tls["server_name"] = cfg["host"]
+        alpn = cfg.get("alpn", "")
+        if alpn: tls["alpn"] = alpn.split(",")
         outbound["tls"] = tls
     if cfg.get("net") == "ws":
         transport = {"type": "ws"}
         if cfg.get("path"): transport["path"] = cfg["path"]
+        if cfg.get("host"): transport["headers"] = {"Host": cfg["host"]}
         outbound["transport"] = transport
     return outbound
 
@@ -80,6 +85,8 @@ def parse_hysteria2(parsed, params):
     tls = {"enabled": True}
     sni = params.get("sni", [""])[0]
     if sni: tls["server_name"] = sni
+    alpn = params.get("alpn", [""])[0]
+    if alpn: tls["alpn"] = alpn.split(",")
     insecure = params.get("insecure", params.get("allowInsecure", ["0"]))[0]
     if insecure == "1": tls["insecure"] = True
     outbound["tls"] = tls
@@ -97,6 +104,8 @@ def parse_tuic(parsed, params):
     tls = {"enabled": True}
     sni = params.get("sni", [""])[0]
     if sni: tls["server_name"] = sni
+    alpn = params.get("alpn", [""])[0]
+    if alpn: tls["alpn"] = alpn.split(",")
     insecure = params.get("insecure", params.get("allowInsecure", ["0"]))[0]
     if insecure == "1": tls["insecure"] = True
     outbound["tls"] = tls
@@ -106,16 +115,31 @@ def main():
     proxy_url = os.environ.get("PROXY_URL", "").strip()
     if not proxy_url: sys.exit(0)
     scheme = proxy_url.split("://")[0].lower()
-    if scheme == "vmess": outbound = parse_vmess(proxy_url)
+    print(f"Parsing proxy URI ({scheme}://***)")
+    if scheme == "vmess":
+        outbound = parse_vmess(proxy_url)
     else:
-        parsed = urlparse(proxy_url); params = parse_qs(parsed.query)
+        parsed = urlparse(proxy_url)
+        params = parse_qs(parsed.query)
         if scheme == "socks5": outbound = parse_socks5(parsed)
         elif scheme in ("http", "https"): outbound = parse_http(parsed)
         elif scheme == "vless": outbound = parse_vless(parsed, params)
         elif scheme in ("hy2", "hysteria2"): outbound = parse_hysteria2(parsed, params)
         elif scheme == "tuic": outbound = parse_tuic(parsed, params)
-        else: sys.exit(1)
-    config = {"log": {"level": "info"}, "inbounds": [{"type": "http", "tag": "http-in", "listen": LISTEN_HOST, "listen_port": LISTEN_PORT}], "outbounds": [outbound, {"type": "direct", "tag": "direct"}]}
-    with open("config.json", "w") as f: json.dump(config, f, indent=2)
+        else:
+            print(f"Unsupported protocol: {scheme}")
+            sys.exit(1)
+    config = {
+        "log": {"level": "info", "timestamp": True},
+        "inbounds": [{"type": "http", "tag": "http-in", "listen": LISTEN_HOST, "listen_port": LISTEN_PORT}],
+        "outbounds": [outbound, {"type": "direct", "tag": "direct"}]
+    }
+    with open("config.json", "w") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+    server = outbound.get("server", "N/A")
+    port = outbound.get("server_port", "N/A")
+    print(f"sing-box config.json generated.")
+    print(f"  Inbound: http://{LISTEN_HOST}:{LISTEN_PORT}")
+    print(f"  Outbound: {outbound['type']} -> {server}:{port}")
 
 if __name__ == "__main__": main()
