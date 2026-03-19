@@ -1,6 +1,7 @@
 const { chromium } = require('playwright');
 const { execSync } = require('child_process');
 const fs = require('fs');
+const path = require('path');
 
 const ACC = process.env.ACC || process.env.EML;
 const ACC_PWD = process.env.ACC_PWD || process.env.PWD;
@@ -59,24 +60,26 @@ async function sendTG(statusIcon, statusText, extra, imagePath) {
   extra = extra || '';
   imagePath = imagePath || null;
   try {
-    const time = new Date(Date.now() + 8 * 3600000).toISOString().replace('T', ' ').slice(0, 19);
-    const text = '🖥 XServer 延期提醒\n' + statusIcon + ' ' + statusText + '\n' + extra + '\n账号: ' + ACC + '\n时间: ' + time;
-    const url = imagePath
-      ? 'https://api.telegram.org/bot' + TG_TOKEN + '/sendPhoto'
-      : 'https://api.telegram.org/bot' + TG_TOKEN + '/sendMessage';
-    const headers = imagePath ? {} : { 'Content-Type': 'application/json' };
-    const res = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: imagePath
-        ? (function() { var fd = new FormData(); fd.append('chat_id', TG_ID); fd.append('caption', text); fd.append('photo', fs.createReadStream(imagePath)); return fd; })()
-        : JSON.stringify({ chat_id: TG_ID, text })
-    });
-    if (res.ok) console.log('✅ TG 通知已发送');
-    else console.log('⚠️ TG 发送失败:', res.status, await res.text());
-  } catch (e) {
-    console.log('⚠️ TG 发送失败:', e.message);
-  }
+    var time = new Date(Date.now() + 8 * 3600000).toISOString().replace('T', ' ').slice(0, 19);
+    var text = 'XServer 延期提醒\n' + statusIcon + ' ' + statusText + '\n' + extra + '\n账号: ' + ACC + '\n时间: ' + time;
+    if (imagePath && fs.existsSync(imagePath)) {
+      var fd = new FormData();
+      fd.append('chat_id', TG_ID);
+      fd.append('caption', text);
+      fd.append('photo', fs.createReadStream(imagePath), path.basename(imagePath));
+      var res = await fetch('https://api.telegram.org/bot' + TG_TOKEN + '/sendPhoto', { method: 'POST', body: fd });
+      if (res.ok) console.log('✅ TG 通知已发送');
+      else console.log('⚠️ TG 发送失败:', res.status, await res.text());
+    } else {
+      var res2 = await fetch('https://api.telegram.org/bot' + TG_TOKEN + '/sendMessage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: TG_ID, text: text })
+      });
+      if (res2.ok) console.log('✅ TG 通知已发送');
+      else console.log('⚠️ TG 发送失败:', res2.status, await res2.text());
+    }
+  } catch (e) { console.log('⚠️ TG 发送失败:', e.message); }
 }
 
 function checkScheduling() {
@@ -94,17 +97,18 @@ function checkScheduling() {
 
 async function parseRemainingMinutes(page) {
   try {
-    await page.waitForLoadState('load');
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(2000);
     var text = await page.locator('body').innerText();
     var m = text.match(/残り(\d+)時間(\d+)分/);
-    if (m) {
-      console.log('⏱️ 剩余时间: ' + m[1] + '小时' + m[2] + '分钟');
-      return parseInt(m[1]) * 60 + parseInt(m[2]);
-    }
+    if (m) { console.log('⏱️ 剩余时间: ' + m[1] + '小时' + m[2] + '分钟'); return parseInt(m[1]) * 60 + parseInt(m[2]); }
     m = text.match(/残り(\d+)時間/);
     if (m) { console.log('⏱️ 剩余时间: ' + m[1] + '小时'); return parseInt(m[1]) * 60; }
+    m = text.match(/(\d+)時間(\d+)分/);
+    if (m) { console.log('⏱️ 剩余时间: ' + m[1] + '小时' + m[2] + '分钟（无前缀）'); return parseInt(m[1]) * 60 + parseInt(m[2]); }
+    console.log('⚠️ 未找到剩余时间，页面内容片段:', text.substring(0, 200));
     return null;
-  } catch (e) { return null; }
+  } catch (e) { console.log('⚠️ 解析失败:', e.message); return null; }
 }
 
 function updateNextCheckDate(daysLater, reason) {
