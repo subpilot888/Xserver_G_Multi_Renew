@@ -209,7 +209,7 @@ async function tryRenew(page, beforeMins) {
       if (h > 24) {
         var skip = Math.max(1, Math.floor((h - 24) / 24));
         console.log('🔭 探测模式: ' + h.toFixed(1) + '小时 → 预约' + skip + '天后');
-        await sendTG('🔭', '探测跳过', '剩余' + h.toFixed(1) + 'h，' + skip + '天后检查');
+        await sendTG('🔭', '探测跳过', '剩余' + h.toFixed(1) + 'h，' + skip + '天后检查', '3_game_manage.png');
         updateNextCheckDate(skip, '探测模式跳过' + skip + '天');
       } else if (h > 6) {
         var delay = Math.floor(Math.random() * 6 * 3600);
